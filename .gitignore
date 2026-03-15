@@ -1,0 +1,7 @@
+.n8n/
+output/
+tracking/
+__pycache__/
+*.pyc
+.DS_Store
+.env

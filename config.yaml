@@ -1,0 +1,101 @@
+# ============================================================
+# Job Application Automation - Configuration
+# ============================================================
+
+# --- Your Profile ---
+profile:
+  name: "Sanjeev Kumar"
+  email: "your-email@example.com"
+  phone: "+44 XXXX XXXXXX"
+  location: "Leeds, United Kingdom"
+  linkedin: "https://linkedin.com/in/sanjeev-kumarx2"
+  university: "University of Leeds"
+  degree: "MSc Embedded Systems Engineering"
+  graduation: "September 2026"
+
+  # Visa statement for UK applications
+  visa_statement: >
+    I am currently on a UK Student Visa completing my MSc at the University of Leeds
+    (graduating September 2026). Upon graduation I will immediately apply for the
+    UK Graduate Route Visa, which grants 2 years of unrestricted work in the UK
+    with no cost or admin burden to the employer. I am therefore able to start work
+    in September 2026 without requiring visa sponsorship.
+
+# --- Job Search Preferences ---
+search:
+  # Keywords to search for
+  keywords:
+    - "Graduate Embedded Software Engineer"
+    - "Graduate Firmware Engineer"
+    - "Junior Embedded Systems Engineer"
+    - "Graduate Embedded Engineer"
+    - "Graduate Controls Engineer"
+    - "Graduate Electronics Engineer"
+    - "Embedded C Engineer Graduate"
+
+  # Locations to search
+  locations:
+    - "United Kingdom"
+    - "Leeds"
+    - "Cambridge"
+    - "Bristol"
+    - "Coventry"
+    - "Derby"
+    - "London"
+
+  # Sectors of interest
+  sectors:
+    - "Automotive"
+    - "Aerospace"
+    - "Defence"
+    - "Semiconductors"
+    - "Embedded Systems"
+    - "Robotics"
+    - "IoT"
+    - "EV"
+
+  # Minimum profile fit score (1-5) to auto-apply
+  min_fit_score: 3
+
+# --- API Keys (fill these in) ---
+api_keys:
+  # OpenAI API key for CV tailoring (uses GPT-4 to rewrite bullet points)
+  # Get one at: https://platform.openai.com/api-keys
+  openai: "YOUR_OPENAI_API_KEY_HERE"
+
+  # Optional: Anthropic API key (alternative to OpenAI)
+  # anthropic: "YOUR_ANTHROPIC_API_KEY_HERE"
+
+# --- File Paths ---
+paths:
+  base_cv_tex: "../Sanjeev_Kumar_Resume.tex"
+  base_cover_letter_tex: "../Sanjeev_Kumar_CoverLetter.tex"
+  target_companies_csv: "../Sanjeev_Target_Companies.csv"
+  output_dir: "./output"
+  tracking_db: "./tracking/applications.json"
+
+# --- Auto-Apply Settings ---
+auto_apply:
+  # Set to true to enable automatic form submission (USE WITH CAUTION)
+  enabled: false
+
+  # Maximum applications per day
+  max_per_day: 10
+
+  # Require manual review before submitting? (recommended: true)
+  require_review: true
+
+  # Job boards to scrape
+  sources:
+    - "linkedin"
+    - "indeed"
+    - "gradcracker"
+    - "targetjobs"
+
+# --- Scheduling ---
+schedule:
+  # How often to scan for new jobs (in hours)
+  scan_interval_hours: 12
+
+  # Time to run daily scan
+  daily_scan_time: "08:00"

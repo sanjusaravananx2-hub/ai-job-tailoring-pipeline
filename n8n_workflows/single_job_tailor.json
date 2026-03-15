@@ -1,0 +1,109 @@
+{
+  "name": "Sanjeev - Multi-Stage AI Job Tailor Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "tailor-cv",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-input",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "tailor-cv"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\nconst jobText = body.job_text || '';\nconst company = body.company || 'Unknown';\nif (!jobText) return [{ json: { error: 'No job_text provided' } }];\nconst safeJob = jobText.substring(0, 6000);\nreturn [{ json: { company, job_text: safeJob, received_at: new Date().toISOString(), char_count: safeJob.length } }];"
+      },
+      "id": "validate",
+      "name": "Input Validator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst prompt = `You are a job analysis, CV tailoring, and ATS optimisation expert.\n\nCandidate: Sanjeev Kumar — MSc Embedded Systems Engineering, University of Leeds (Sep 2026)\nSkills: C, C++, Python, Verilog HDL, MATLAB/Simulink | ARM Cortex-M (STM32), Cyclone V SoC, Pixhawk PX4/NuttX\nProtocols: CAN 2.0B, UART, SPI, I2C, AXI4-Lite, MAVLink, PWM\nExperience: 8-month embedded firmware placement at InTrainz, UAV avionics engineer (Pixhawk, reduced telemetry latency 40%), Formula Student EV (CAN telemetry)\nProjects: AI thermal prediction for EV inverter (IGBT, STM32 X-CUBE-AI, MATLAB), CAN sensor fusion (STM32+FPGA, custom Verilog IP)\nCerts: UK Amateur Radio Licence M7KVD, Power Electronics, EV Sensors, MATLAB Onramp\n\nReturn ONLY valid JSON (no markdown, no code fences):\n{\n  \"title\": \"job title\",\n  \"company\": \"company name\",\n  \"location\": \"location\",\n  \"key_requirements\": [\"list\"],\n  \"fit_score\": 1-5,\n  \"matching_skills\": [\"list\"],\n  \"gaps\": [\"list\"],\n  \"ats_keywords\": [\"every ATS keyword from posting\"],\n  \"ats_keywords_in_cv\": [\"keywords candidate has\"],\n  \"ats_keywords_missing\": [\"missing — flag addable vs genuine gaps\"],\n  \"ats_score\": \"0-100\",\n  \"ats_optimised_skills_line\": \"comma-separated ATS skills line\",\n  \"tailored_profile\": \"2-3 sentence profile\",\n  \"tailored_bullets\": [\"6 rewritten bullets\"],\n  \"cover_letter\": \"350 words max, natural, company-specific, visa: graduating Sep 2026, Graduate Route Visa = 2yr unrestricted work\",\n  \"ats_tips\": [\"3-5 tips\"]\n}\n\nJob posting:\n${d.job_text}`;\n\nconst geminiBody = {\n  contents: [{ parts: [{ text: prompt }] }],\n  generationConfig: { temperature: 0.3, maxOutputTokens: 8192 }\n};\n\nreturn [{ json: { ...d, gemini_body: JSON.stringify(geminiBody) } }];"
+      },
+      "id": "prompt-eng",
+      "name": "Prompt Engineer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=YOUR_GEMINI_API_KEY",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.gemini_body }}",
+        "options": { "timeout": 90000 }
+      },
+      "id": "gemini",
+      "name": "Gemini 2.5 Flash",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 300],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nlet text = '';\ntry {\n  const parts = response.candidates[0].content.parts;\n  for (const p of parts) { if (!p.thought && p.text) text = p.text; }\n  if (!text) text = parts[parts.length - 1].text || '';\n} catch (e) {\n  return [{ json: { error: 'No Gemini response', stage: 'parse' } }];\n}\ntext = text.replace(/```json/gi, '').replace(/```/g, '').trim();\ntry {\n  const parsed = JSON.parse(text);\n  parsed._raw_tokens = text.length;\n  return [{ json: parsed }];\n} catch (e) {\n  return [{ json: { error: e.message, stage: 'json_parse', first_200: text.substring(0, 200) } }];\n}"
+      },
+      "id": "parse",
+      "name": "Response Parser",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nif (d.error) return [{ json: d }];\n\nconst totalKw = (d.ats_keywords || []).length;\nconst inCv = (d.ats_keywords_in_cv || []).length;\nconst missing = (d.ats_keywords_missing || []).length;\nconst coverage = totalKw > 0 ? Math.round((inCv / totalKw) * 100) : 0;\n\nconst fitLabel = d.fit_score >= 4 ? 'STRONG' : d.fit_score >= 3 ? 'MODERATE' : 'WEAK';\nconst atsLabel = parseInt(d.ats_score) >= 80 ? 'HIGH' : parseInt(d.ats_score) >= 60 ? 'MEDIUM' : 'LOW';\n\nreturn [{ json: {\n  ...d,\n  analysis: {\n    keyword_coverage: coverage,\n    keyword_total: totalKw,\n    keyword_matched: inCv,\n    keyword_missing: missing,\n    fit_label: fitLabel,\n    ats_label: atsLabel,\n    recommendation: d.fit_score >= 3 ? 'APPLY' : 'SKIP',\n    analysed_at: new Date().toISOString()\n  }\n} }];"
+      },
+      "id": "scorer",
+      "name": "ATS Scorer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nif (d.error) return [{ json: d }];\n\nreturn [{ json: {\n  pipeline_version: '2.0',\n  processed_at: new Date().toISOString(),\n  title: d.title,\n  company: d.company,\n  location: d.location,\n  scores: {\n    fit: d.fit_score,\n    ats: d.ats_score,\n    fit_label: d.analysis.fit_label,\n    ats_label: d.analysis.ats_label,\n    recommendation: d.analysis.recommendation\n  },\n  keywords: {\n    total: d.analysis.keyword_total,\n    matched: d.analysis.keyword_matched,\n    missing: d.analysis.keyword_missing,\n    coverage_pct: d.analysis.keyword_coverage,\n    missing_list: d.ats_keywords_missing || [],\n    optimised_skills_line: d.ats_optimised_skills_line || ''\n  },\n  tailored: {\n    profile: d.tailored_profile || '',\n    bullets: d.tailored_bullets || [],\n    cover_letter: d.cover_letter || ''\n  },\n  gaps: d.gaps || [],\n  matching_skills: d.matching_skills || [],\n  key_requirements: d.key_requirements || [],\n  ats_tips: d.ats_tips || []\n} }];"
+      },
+      "id": "format",
+      "name": "Output Formatter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "id": "respond",
+      "name": "API Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1750, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": { "main": [[{ "node": "Input Validator", "type": "main", "index": 0 }]] },
+    "Input Validator": { "main": [[{ "node": "Prompt Engineer", "type": "main", "index": 0 }]] },
+    "Prompt Engineer": { "main": [[{ "node": "Gemini 2.5 Flash", "type": "main", "index": 0 }]] },
+    "Gemini 2.5 Flash": { "main": [[{ "node": "Response Parser", "type": "main", "index": 0 }]] },
+    "Response Parser": { "main": [[{ "node": "ATS Scorer", "type": "main", "index": 0 }]] },
+    "ATS Scorer": { "main": [[{ "node": "Output Formatter", "type": "main", "index": 0 }]] },
+    "Output Formatter": { "main": [[{ "node": "API Response", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "job-automation" }, { "name": "ai-pipeline" }, { "name": "ats-optimisation" }]
+}

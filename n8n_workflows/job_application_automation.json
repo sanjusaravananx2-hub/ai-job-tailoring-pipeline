@@ -1,0 +1,297 @@
+{
+  "name": "Sanjeev - Job Application Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 12
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 12 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 200]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "keywords",
+              "name": "keywords",
+              "value": "=[\"Graduate Embedded Software Engineer\", \"Graduate Firmware Engineer\", \"Junior Embedded Systems Engineer\", \"Graduate Embedded Engineer\", \"Graduate Controls Engineer\"]",
+              "type": "array"
+            },
+            {
+              "id": "locations",
+              "name": "locations",
+              "value": "=[\"United Kingdom\", \"Leeds\", \"Cambridge\", \"Bristol\", \"Coventry\", \"Derby\"]",
+              "type": "array"
+            }
+          ]
+        }
+      },
+      "id": "set-search-params",
+      "name": "Set Search Params",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [250, 100]
+    },
+    {
+      "parameters": {
+        "url": "=https://www.indeed.co.uk/jobs?q={{ encodeURIComponent($json.keywords[0]) }}&l=United+Kingdom&sort=date&fromage=3",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "scrape-indeed",
+      "name": "Scrape Indeed UK",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 0]
+    },
+    {
+      "parameters": {
+        "url": "=https://www.gradcracker.com/search/all-disciplines/engineering-jobs?keyword={{ encodeURIComponent($json.keywords[0]) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "scrape-gradcracker",
+      "name": "Scrape Gradcracker",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 200]
+    },
+    {
+      "parameters": {
+        "url": "=https://www.targetjobs.co.uk/jobs?keyword={{ encodeURIComponent($json.keywords[0]) }}&sector=engineering",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "scrape-targetjobs",
+      "name": "Scrape TargetJobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyCWf7FoqvPWe8iJ_MIs29xZDkscYKKqk0E",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"You are a job board HTML parser. Extract all job listings from this HTML content. For each job found, extract: title, company, location, and URL.\\n\\nReturn ONLY valid JSON array (no markdown, no code fences):\\n[{\\\"title\\\": \\\"...\\\", \\\"company\\\": \\\"...\\\", \\\"location\\\": \\\"...\\\", \\\"url\\\": \\\"...\\\", \\\"source\\\": \\\"indeed_uk\\\"}]\\n\\nIf no jobs found, return [].\\n\\nHTML content (Indeed UK):\\n{{ ($('Scrape Indeed UK').first().json.data || '').substring(0, 8000).replace(/\\\\/g, '\\\\\\\\').replace(/\\\"/g, '\\\\\\\"').replace(/\\n/g, '\\\\n') }}\\n\\n---\\nHTML content (Gradcracker):\\n{{ ($('Scrape Gradcracker').first().json.data || '').substring(0, 8000).replace(/\\\\/g, '\\\\\\\\').replace(/\\\"/g, '\\\\\\\"').replace(/\\n/g, '\\\\n') }}\\n\\n---\\nHTML content (TargetJobs):\\n{{ ($('Scrape TargetJobs').first().json.data || '').substring(0, 8000).replace(/\\\\/g, '\\\\\\\\').replace(/\\\"/g, '\\\\\\\"').replace(/\\n/g, '\\\\n') }}\"\n    }]\n  }],\n  \"generationConfig\": {\n    \"temperature\": 0.1,\n    \"maxOutputTokens\": 4096\n  }\n}",
+        "options": {}
+      },
+      "id": "gemini-parse-jobs",
+      "name": "Gemini: Parse All Jobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [800, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Gemini response into individual job items\nconst response = $input.first().json;\nlet text = '';\n\ntry {\n  text = response.candidates[0].content.parts[0].text;\n} catch (e) {\n  return [{ json: { error: 'No Gemini response', raw: JSON.stringify(response).substring(0, 500) } }];\n}\n\ntext = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n\nlet jobs = [];\ntry {\n  jobs = JSON.parse(text);\n} catch (e) {\n  const match = text.match(/\\[[\\s\\S]*\\]/);\n  if (match) {\n    try { jobs = JSON.parse(match[0]); } catch (e2) { jobs = []; }\n  }\n}\n\nif (!Array.isArray(jobs) || jobs.length === 0) {\n  return [{ json: { status: 'no_jobs_found', scraped_at: new Date().toISOString() } }];\n}\n\n// Deduplicate\nconst seen = new Set();\nconst unique = jobs.filter(job => {\n  const key = `${(job.title || '').toLowerCase()}_${(job.company || '').toLowerCase()}`;\n  if (seen.has(key)) return false;\n  seen.add(key);\n  return true;\n});\n\nreturn unique.map(job => ({ json: job }));"
+      },
+      "id": "parse-jobs",
+      "name": "Parse & Deduplicate Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyCWf7FoqvPWe8iJ_MIs29xZDkscYKKqk0E",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"You are a job-matching AI for an Embedded Systems Engineering graduate.\\n\\nCandidate Profile:\\n- MSc Embedded Systems Engineering, University of Leeds (graduating Sep 2026)\\n- Skills: C, C++, Python, Verilog HDL, MATLAB/Simulink\\n- Platforms: ARM Cortex-M (STM32), Cyclone V SoC, Pixhawk (PX4/NuttX RTOS)\\n- Protocols: CAN 2.0B, UART, SPI, I2C, AXI4-Lite, MAVLink, PWM\\n- Experience: 8-month firmware placement, UAV avionics, Formula Student EV, CAN sensor fusion, EV thermal management\\n- Projects: AI thermal prediction for EV inverter (IGBT, MATLAB, STM32 X-CUBE-AI), CAN bus sensor fusion (FPGA + MCU)\\n\\nAnalyse this job and return ONLY valid JSON (no markdown, no code fences):\\n{\\n  \\\"title\\\": \\\"job title\\\",\\n  \\\"company\\\": \\\"company\\\",\\n  \\\"location\\\": \\\"location\\\",\\n  \\\"fit_score\\\": 1-5,\\n  \\\"matching_skills\\\": [\\\"list\\\"],\\n  \\\"missing_skills\\\": [\\\"list\\\"],\\n  \\\"cv_emphasis\\\": [\\\"what to highlight\\\"],\\n  \\\"cover_letter_angle\\\": \\\"one sentence\\\",\\n  \\\"should_apply\\\": true/false\\n}\\n\\nJob: {{ JSON.stringify($json).replace(/\\\\/g, '\\\\\\\\').replace(/\\\"/g, '\\\\\\\"') }}\"\n    }]\n  }],\n  \"generationConfig\": {\n    \"temperature\": 0.3,\n    \"maxOutputTokens\": 1024\n  }\n}",
+        "options": {}
+      },
+      "id": "gemini-score",
+      "name": "Gemini: Score Job Fit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1300, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse scoring response\nconst response = $input.first().json;\nlet text = '';\ntry {\n  text = response.candidates[0].content.parts[0].text;\n} catch (e) {\n  return [{ json: { fit_score: 0, error: 'parse_failed' } }];\n}\n\ntext = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n\ntry {\n  const result = JSON.parse(text);\n  return [{ json: result }];\n} catch (e) {\n  const match = text.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    try { return [{ json: JSON.parse(match[0]) }]; } catch (e2) {}\n  }\n  return [{ json: { fit_score: 0, error: 'json_parse_failed', raw: text.substring(0, 200) } }];\n}"
+      },
+      "id": "parse-score",
+      "name": "Parse Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1550, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "fit-check",
+              "leftValue": "={{ $json.fit_score }}",
+              "rightValue": 3,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "filter-good-fits",
+      "name": "Filter: Score >= 3",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [1800, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyCWf7FoqvPWe8iJ_MIs29xZDkscYKKqk0E",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"You are a CV tailoring and cover letter writing expert for a graduate embedded systems engineer.\\n\\nCandidate: Sanjeev Kumar\\nEmail: sanjeevsaravanakumarx1@gmail.com | Phone: +44 7895 096048 | Leeds, UK\\nLinkedIn: linkedin.com/in/sanjeev-kumarx2\\n\\nEducation:\\n- MSc Embedded Systems Engineering, University of Leeds (graduating Sep 2026, Predicted First Class)\\n- B.Eng Electronics & Communication Engineering (First Class with Distinction)\\n\\nExperience bullets to tailor:\\n1. Designed and integrated Pixhawk (STM32-based, PX4/NuttX RTOS) avionics for autonomous UAV; flight control, telemetry, multi-sensor interfacing (GPS, IMU, power modules)\\n2. Reduced telemetry latency spikes by 40% through MAVLink protocol optimisation\\n3. Contributing to CAN-based telemetry integration for Formula Student electric vehicle\\n4. 8-month industrial placement developing embedded firmware in C/C++ — peripheral drivers, protocol debugging, HW-SW integration\\n\\nProject bullets to tailor:\\n5. Built coupled electrothermal model in MATLAB for IGBT power module (10kHz SPWM, 600V DC, 35A peak), 4-layer Foster RC thermal network\\n6. Engineered loss-based features from fused sensor telemetry, 20% prediction stability improvement\\n7. Deploying lightweight ML model on STM32 via X-CUBE-AI/CMSIS-NN, 95% inference latency reduction\\n8. Built multi-node CAN 2.0B network (500kbps), STM32F4 bare-metal firmware, I2C at 100Hz\\n9. Designed custom Verilog IP on Cyclone V FPGA (SPI master, CAN parser, FIR filter), 90% latency reduction\\n\\nVisa: Graduating Sep 2026, will apply for UK Graduate Route Visa (2 years unrestricted work, no cost to employer)\\n\\nReturn ONLY valid JSON (no markdown, no code fences):\\n{\\n  \\\"tailored_profile\\\": \\\"2-3 sentence tailored profile summary\\\",\\n  \\\"tailored_bullets\\\": [\\\"rewritten bullet 1\\\", \\\"rewritten bullet 2\\\", ...],\\n  \\\"cover_letter\\\": \\\"Full cover letter, max 350 words, natural genuine tone, company-specific, honest about gaps, include visa info naturally, no cliches\\\"\\n}\\n\\nJob details and scoring:\\n{{ JSON.stringify($json).replace(/\\\\/g, '\\\\\\\\').replace(/\\\"/g, '\\\\\\\"') }}\\n\\nEmphasise: {{ ($json.cv_emphasis || []).join(', ') }}\\nCover letter angle: {{ $json.cover_letter_angle || 'embedded firmware and domain overlap' }}\"\n    }]\n  }],\n  \"generationConfig\": {\n    \"temperature\": 0.5,\n    \"maxOutputTokens\": 4096\n  }\n}",
+        "options": {}
+      },
+      "id": "gemini-tailor",
+      "name": "Gemini: Tailor CV + Cover Letter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2050, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Gemini tailoring response and merge with job data\nconst response = $input.first().json;\nlet text = '';\ntry {\n  text = response.candidates[0].content.parts[0].text;\n} catch (e) {\n  return [{ json: { error: 'Gemini tailor failed' } }];\n}\n\ntext = text.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n\nlet tailored;\ntry {\n  tailored = JSON.parse(text);\n} catch (e) {\n  const match = text.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    try { tailored = JSON.parse(match[0]); } catch (e2) {\n      return [{ json: { error: 'JSON parse failed', raw: text.substring(0, 300) } }];\n    }\n  }\n}\n\n// Get the score data from earlier node\nconst scoreData = $('Parse Score').first().json;\n\nconst entry = {\n  id: Date.now(),\n  title: scoreData.title || 'Unknown',\n  company: scoreData.company || 'Unknown',\n  location: scoreData.location || 'Unknown',\n  fit_score: scoreData.fit_score || 0,\n  matching_skills: scoreData.matching_skills || [],\n  missing_skills: scoreData.missing_skills || [],\n  tailored_profile: tailored.tailored_profile || '',\n  tailored_bullets: tailored.tailored_bullets || [],\n  cover_letter: tailored.cover_letter || '',\n  status: 'tailored_ready_to_review',\n  found_date: new Date().toISOString()\n};\n\nreturn [{ json: entry }];"
+      },
+      "id": "parse-tailor",
+      "name": "Parse Tailored Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2300, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate summary\nconst job = $input.first().json;\n\nconst summary = {\n  date: new Date().toISOString().split('T')[0],\n  message: `Found match: ${job.title} at ${job.company} (Score: ${job.fit_score}/5)`,\n  job: job\n};\n\nreturn [{ json: summary }];"
+      },
+      "id": "daily-summary",
+      "name": "Summary Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2550, 200]
+    }
+  ],
+  "connections": {
+    "Every 12 Hours": {
+      "main": [
+        [{ "node": "Set Search Params", "type": "main", "index": 0 }]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [{ "node": "Set Search Params", "type": "main", "index": 0 }]
+      ]
+    },
+    "Set Search Params": {
+      "main": [
+        [
+          { "node": "Scrape Indeed UK", "type": "main", "index": 0 },
+          { "node": "Scrape Gradcracker", "type": "main", "index": 0 },
+          { "node": "Scrape TargetJobs", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Scrape Indeed UK": {
+      "main": [
+        [{ "node": "Gemini: Parse All Jobs", "type": "main", "index": 0 }]
+      ]
+    },
+    "Scrape Gradcracker": {
+      "main": [
+        [{ "node": "Gemini: Parse All Jobs", "type": "main", "index": 0 }]
+      ]
+    },
+    "Scrape TargetJobs": {
+      "main": [
+        [{ "node": "Gemini: Parse All Jobs", "type": "main", "index": 0 }]
+      ]
+    },
+    "Gemini: Parse All Jobs": {
+      "main": [
+        [{ "node": "Parse & Deduplicate Jobs", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse & Deduplicate Jobs": {
+      "main": [
+        [{ "node": "Gemini: Score Job Fit", "type": "main", "index": 0 }]
+      ]
+    },
+    "Gemini: Score Job Fit": {
+      "main": [
+        [{ "node": "Parse Score", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Score": {
+      "main": [
+        [{ "node": "Filter: Score >= 3", "type": "main", "index": 0 }]
+      ]
+    },
+    "Filter: Score >= 3": {
+      "main": [
+        [{ "node": "Gemini: Tailor CV + Cover Letter", "type": "main", "index": 0 }]
+      ]
+    },
+    "Gemini: Tailor CV + Cover Letter": {
+      "main": [
+        [{ "node": "Parse Tailored Output", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Tailored Output": {
+      "main": [
+        [{ "node": "Summary Report", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "job-automation" },
+    { "name": "career" }
+  ]
+}
